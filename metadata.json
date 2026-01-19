@@ -1,0 +1,8 @@
+{
+  "name": "Velvet Wallet",
+  "short_name": "Velvet",
+  "description": "Эстетичный семейный учет трат с ИИ-помощником",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
