@@ -1,13 +1,20 @@
-
 {
   "name": "Velvet Wallet",
   "short_name": "Velvet",
-  "description": "Эстетичный финансовый учет для Марии и Виктории",
-  "start_url": ".",
+  "description": "Эстетичный финансовый учет для двоих",
+  "start_url": "./",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#f8fafc",
   "theme_color": "#4f46e5",
+  "orientation": "portrait",
   "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/10502/10502127.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "https://cdn-icons-png.flaticon.com/512/10502/10502127.png",
       "sizes": "512x512",

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { PieChart as RPieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { GoogleGenAI } from "@google/genai";
+import firebaseService from './services/firebaseService';
 
 // --- TYPES ---
 export type User = 'Мария' | 'Виктория' | 'Общее';
@@ -246,9 +247,20 @@ const ReportsView: React.FC<{ transactions: Transaction[], month: number, year: 
     return Object.entries(cats).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [transactions, month, year]);
 
+  const monthTotals = useMemo(() => {
+    const filtered = transactions.filter(t => {
+      const d = new Date(t.date);
+      return d.getMonth() === month && d.getFullYear() === year;
+    });
+    const income = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const expense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const savings = filtered.filter(t => t.category === Category.SAVINGS && t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    return { income, expense, savings, balance: income - expense };
+  }, [transactions, month, year]);
+
   return (
     <div className="space-y-8">
-      <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
+      <div className="bg-white p-6 sm:p-8 rounded-[3rem] shadow-sm border border-slate-100">
         <h3 className="text-xl font-serif text-indigo-950 mb-8 text-center">Траты по категориям</h3>
         <div className="h-[250px] w-full">
           <ResponsiveContainer>
@@ -272,52 +284,228 @@ const ReportsView: React.FC<{ transactions: Transaction[], month: number, year: 
           ))}
         </div>
       </div>
+
+      {/* Income vs Expense Comparison */}
+      <div className="bg-white p-6 sm:p-8 rounded-[3rem] shadow-sm border border-slate-100">
+        <h3 className="text-xl font-serif text-indigo-950 mb-6 text-center">Приход vs Расход</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-emerald-50 p-6 rounded-3xl text-center">
+            <div className="text-[10px] font-bold text-emerald-600 uppercase mb-2 tracking-wider">Приход</div>
+            <div className="text-2xl font-light text-emerald-700">{monthTotals.income.toLocaleString()} <span className="text-sm opacity-50">kr</span></div>
+          </div>
+          <div className="bg-rose-50 p-6 rounded-3xl text-center">
+            <div className="text-[10px] font-bold text-rose-600 uppercase mb-2 tracking-wider">Расход</div>
+            <div className="text-2xl font-light text-rose-700">{monthTotals.expense.toLocaleString()} <span className="text-sm opacity-50">kr</span></div>
+          </div>
+          <div className="bg-indigo-50 p-6 rounded-3xl text-center">
+            <div className="text-[10px] font-bold text-indigo-600 uppercase mb-2 tracking-wider">Накопления</div>
+            <div className="text-2xl font-light text-indigo-700">{monthTotals.savings.toLocaleString()} <span className="text-sm opacity-50">kr</span></div>
+          </div>
+          <div className={`p-6 rounded-3xl text-center ${monthTotals.balance >= 0 ? 'bg-teal-50' : 'bg-amber-50'}`}>
+            <div className={`text-[10px] font-bold uppercase mb-2 tracking-wider ${monthTotals.balance >= 0 ? 'text-teal-600' : 'text-amber-600'}`}>Остаток</div>
+            <div className={`text-2xl font-light ${monthTotals.balance >= 0 ? 'text-teal-700' : 'text-amber-700'}`}>
+              {monthTotals.balance >= 0 ? '+' : ''}{monthTotals.balance.toLocaleString()} <span className="text-sm opacity-50">kr</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
 const PlansView: React.FC<{ plans: Plan[], wise: number, onUpdate: (p: Plan[]) => void }> = ({ plans, wise, onUpdate }) => {
+  const [editingItem, setEditingItem] = useState<{ planId: string, item: PlanItem } | null>(null);
+  const [isAddingItem, setIsAddingItem] = useState<string | null>(null);
+
   return (
     <div className="space-y-10 pb-12">
       <div className="px-2">
-        <h3 className="text-3xl font-serif text-indigo-950">Стратегические цели</h3>
+        <h3 className="text-2xl sm:text-3xl font-serif text-indigo-950">Стратегические цели</h3>
         <p className="text-sm text-slate-400 mt-2 italic leading-relaxed">Накопления на Wise работают на ваши будущие победы</p>
       </div>
       {plans.map(plan => {
         const total = plan.items.reduce((s, i) => s + i.amount, 0);
         const progress = total > 0 ? Math.min((wise / total) * 100, 100) : 0;
         let runningTotal = wise;
+        
         return (
-          <div key={plan.id} className="bg-white rounded-[3.5rem] shadow-sm border border-slate-100 overflow-hidden">
-            <div className={`p-10 ${plan.color} text-white relative`}>
-              <div className="flex justify-between items-start mb-6">
-                <div className="bg-white/20 p-4 rounded-3xl backdrop-blur-xl border border-white/20"><Target size={32} /></div>
-                <div className="text-5xl font-light opacity-80">{Math.round(progress)}%</div>
+          <div key={plan.id} className="bg-white rounded-[3.5rem] shadow-lg border border-slate-100 overflow-hidden">
+            <div className={`p-8 sm:p-10 ${plan.color} text-white relative`}>
+              <div className="absolute -right-8 -top-8 w-32 h-32 bg-white/10 rounded-full blur-3xl" />
+              <div className="flex justify-between items-start mb-6 relative z-10">
+                <div className="bg-white/20 p-4 rounded-3xl backdrop-blur-xl border border-white/20">
+                  <Target size={32} />
+                </div>
+                <div className="text-right">
+                  <div className="text-5xl font-light opacity-90">{Math.round(progress)}%</div>
+                  <div className="text-xs opacity-60 uppercase tracking-wider mt-1">выполнено</div>
+                </div>
               </div>
-              <h4 className="text-2xl font-serif mb-2">{plan.title}</h4>
-              <p className="text-white/60 text-[10px] font-bold uppercase tracking-[0.2em]">Бюджет: {total.toLocaleString()} kr</p>
+              <h4 className="text-2xl font-serif mb-2 relative z-10">{plan.title}</h4>
+              <p className="text-white/70 text-xs font-bold uppercase tracking-[0.2em]">Общая цель: {total.toLocaleString()} kr</p>
+              
+              {/* Overall Progress Bar */}
+              <div className="mt-6 relative z-10">
+                <div className="h-3 w-full bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
+                  <div 
+                    className="h-full bg-white transition-all duration-1000 shadow-lg" 
+                    style={{ width: `${progress}%` }} 
+                  />
+                </div>
+              </div>
             </div>
-            <div className="p-10 space-y-8">
-              {plan.items.map(item => {
+            
+            <div className="p-8 sm:p-10 space-y-6">
+              {/* Wise Savings Display */}
+              <div className="bg-indigo-50 p-6 rounded-3xl border-2 border-indigo-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <PiggyBank size={24} className="text-indigo-600" />
+                    <span className="text-sm font-bold text-indigo-900">Накоплено в Wise</span>
+                  </div>
+                  <span className="text-2xl font-light text-indigo-700">{wise.toLocaleString()} <span className="text-sm opacity-50">kr</span></span>
+                </div>
+              </div>
+
+              {/* Subcategories */}
+              {plan.items.map((item, idx) => {
                 const itemSaved = Math.min(runningTotal, item.amount);
                 const itemPerc = item.amount > 0 ? (itemSaved / item.amount) * 100 : 0;
                 runningTotal = Math.max(0, runningTotal - item.amount);
+                
+                const isEditing = editingItem?.planId === plan.id && editingItem?.item.id === item.id;
+                
                 return (
-                  <div key={item.id} className="space-y-3">
-                    <div className="flex justify-between items-center px-1">
-                      <span className="text-sm font-bold text-slate-700">{item.label}</span>
-                      <span className="text-xs font-light text-slate-400">{item.amount.toLocaleString()} kr</span>
-                    </div>
-                    <div className="h-2 w-full bg-slate-50 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${itemPerc}%` }} />
-                    </div>
+                  <div key={item.id} className="space-y-3 group">
+                    {isEditing ? (
+                      <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
+                        <input
+                          type="text"
+                          defaultValue={item.label}
+                          placeholder="Название"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-indigo-400"
+                          id={`label-${item.id}`}
+                        />
+                        <input
+                          type="number"
+                          defaultValue={item.amount}
+                          placeholder="Сумма"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-indigo-400"
+                          id={`amount-${item.id}`}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              const newLabel = (document.getElementById(`label-${item.id}`) as HTMLInputElement).value;
+                              const newAmount = Number((document.getElementById(`amount-${item.id}`) as HTMLInputElement).value);
+                              const updatedItems = plan.items.map(i => 
+                                i.id === item.id ? { ...i, label: newLabel, amount: newAmount } : i
+                              );
+                              onUpdate(plans.map(p => p.id === plan.id ? { ...p, items: updatedItems } : p));
+                              setEditingItem(null);
+                            }}
+                            className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors"
+                          >
+                            Сохранить
+                          </button>
+                          <button
+                            onClick={() => setEditingItem(null)}
+                            className="px-4 bg-slate-200 text-slate-600 py-2 rounded-xl text-sm font-bold hover:bg-slate-300 transition-colors"
+                          >
+                            Отмена
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-center px-1">
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-bold text-slate-700">{item.label}</span>
+                            <span className="text-xs font-light text-slate-400">{item.amount.toLocaleString()} kr</span>
+                          </div>
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => setEditingItem({ planId: plan.id, item })}
+                              className="p-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition-colors"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (!confirm(`Удалить "${item.label}"?`)) return;
+                                const updatedItems = plan.items.filter(i => i.id !== item.id);
+                                onUpdate(plans.map(p => p.id === plan.id ? { ...p, items: updatedItems } : p));
+                              }}
+                              className="p-2 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="relative">
+                          <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-indigo-500 transition-all duration-1000" 
+                              style={{ width: `${itemPerc}%` }} 
+                            />
+                          </div>
+                          <div className="absolute right-0 -top-5 text-xs font-bold text-indigo-600">
+                            {Math.round(itemPerc)}%
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })}
-              <button onClick={() => {
-                const newItems = [...plan.items, { id: Date.now().toString(), label: 'Новый пункт', amount: 0 }];
-                onUpdate(plans.map(p => p.id === plan.id ? { ...p, items: newItems } : p));
-              }} className="w-full py-5 border-2 border-dashed border-slate-100 rounded-[2rem] text-slate-300 text-[10px] font-bold uppercase tracking-widest hover:border-indigo-200 hover:text-indigo-400 transition-all">Добавить подпункт</button>
+              
+              {/* Add New Subcategory */}
+              {isAddingItem === plan.id ? (
+                <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
+                  <input
+                    type="text"
+                    placeholder="Название новой категории"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-indigo-400"
+                    id={`new-label-${plan.id}`}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Сумма"
+                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-indigo-400"
+                    id={`new-amount-${plan.id}`}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const newLabel = (document.getElementById(`new-label-${plan.id}`) as HTMLInputElement).value;
+                        const newAmount = Number((document.getElementById(`new-amount-${plan.id}`) as HTMLInputElement).value);
+                        if (!newLabel || !newAmount) return;
+                        const newItem: PlanItem = { id: Date.now().toString(), label: newLabel, amount: newAmount };
+                        const updatedItems = [...plan.items, newItem];
+                        onUpdate(plans.map(p => p.id === plan.id ? { ...p, items: updatedItems } : p));
+                        setIsAddingItem(null);
+                      }}
+                      className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors"
+                    >
+                      Добавить
+                    </button>
+                    <button
+                      onClick={() => setIsAddingItem(null)}
+                      className="px-4 bg-slate-200 text-slate-600 py-2 rounded-xl text-sm font-bold hover:bg-slate-300 transition-colors"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsAddingItem(plan.id)}
+                  className="w-full py-5 border-2 border-dashed border-slate-200 rounded-[2rem] text-slate-400 text-xs font-bold uppercase tracking-widest hover:border-indigo-300 hover:text-indigo-500 transition-all flex items-center justify-center gap-2"
+                >
+                  <PlusCircle size={18} />
+                  Добавить подкатегорию
+                </button>
+              )}
             </div>
           </div>
         );
@@ -335,9 +523,41 @@ const App: React.FC = () => {
   const [plans, setPlans] = useState<Plan[]>(() => {
     const s = localStorage.getItem('velvet_plans');
     return s ? JSON.parse(s) : [
-      { id: 'p1', title: 'Аргентина 🇦🇷', color: 'bg-indigo-600', items: [{ id: 'i1', label: 'Билеты', amount: 15000 }, { id: 'i2', label: 'Жилье', amount: 12000 }] },
-      { id: 'p2', title: 'Европа 🇪🇺', color: 'bg-emerald-500', items: [{ id: 'i3', label: 'Тур', amount: 20000 }] },
-      { id: 'p3', title: 'Украина (Квартира) 🏠', color: 'bg-slate-800', items: [{ id: 'i4', label: 'Первый взнос', amount: 500000 }] }
+      { 
+        id: 'p1', 
+        title: 'Аргентина 🇦🇷', 
+        color: 'bg-gradient-to-br from-sky-400 to-blue-500', 
+        items: [
+          { id: 'i1', label: 'Билеты (на 2 человек + кот)', amount: 16000 },
+          { id: 'i2', label: 'Съем квартиры на 4 месяца', amount: 10000 },
+          { id: 'i3', label: 'Еда на 3 месяца', amount: 5000 },
+          { id: 'i4', label: 'Страховка', amount: 2000 },
+          { id: 'i5', label: 'Непредвиденные расходы', amount: 5000 }
+        ] 
+      },
+      { 
+        id: 'p2', 
+        title: 'Европа 🇪🇺', 
+        color: 'bg-gradient-to-br from-emerald-400 to-green-500', 
+        items: [
+          { id: 'i6', label: 'Билеты', amount: 10000 },
+          { id: 'i7', label: 'Квартира', amount: 32000 },
+          { id: 'i8', label: 'Еда', amount: 20000 },
+          { id: 'i9', label: 'Непредвиденные расходы', amount: 6000 }
+        ] 
+      },
+      { 
+        id: 'p3', 
+        title: 'Украина 🏠', 
+        color: 'bg-gradient-to-br from-amber-400 to-yellow-500', 
+        items: [
+          { id: 'i10', label: 'Покупка квартиры', amount: 500000 },
+          { id: 'i11', label: 'Ремонт', amount: 100000 },
+          { id: 'i12', label: 'Билеты', amount: 5000 },
+          { id: 'i13', label: 'Еда', amount: 5000 },
+          { id: 'i14', label: 'Непредвиденные расходы', amount: 3000 }
+        ] 
+      }
     ];
   });
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'reports' | 'plans'>('home');
@@ -348,23 +568,80 @@ const App: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('velvet_key') || '');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(firebaseService.isOnline());
 
+  // Вычисляем текущий месяц и год из viewDate
+  const month = viewDate.getMonth();
+  const year = viewDate.getFullYear();
+
+  // Сохранение в localStorage (offline fallback)
   useEffect(() => {
     localStorage.setItem('velvet_tx', JSON.stringify(transactions));
     localStorage.setItem('velvet_plans', JSON.stringify(plans));
     localStorage.setItem('velvet_key', apiKey);
   }, [transactions, plans, apiKey]);
 
-  const month = viewDate.getMonth();
-  const year = viewDate.getFullYear();
+  // Firebase синхронизация транзакций
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const unsubscribe = firebaseService.subscribeToTransactions(
+      year,
+      month,
+      (firebaseTransactions) => {
+        // Обновляем только если данные из Firebase отличаются
+        const currentMonthTx = transactions.filter(t => {
+          const d = new Date(t.date);
+          return d.getMonth() === month && d.getFullYear() === year;
+        });
+        
+        if (JSON.stringify(currentMonthTx) !== JSON.stringify(firebaseTransactions)) {
+          // Объединяем firebase данные с транзакциями из других месяцев
+          const otherMonthsTx = transactions.filter(t => {
+            const d = new Date(t.date);
+            return d.getMonth() !== month || d.getFullYear() !== year;
+          });
+          setTransactions([...otherMonthsTx, ...firebaseTransactions]);
+        }
+      }
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [month, year, isOnline]);
+
+  // Firebase синхронизация планов
+  useEffect(() => {
+    if (!isOnline) return;
+
+    const unsubscribe = firebaseService.subscribeToplans(
+      year,
+      month,
+      (firebasePlans) => {
+        if (firebasePlans.length > 0 && JSON.stringify(plans) !== JSON.stringify(firebasePlans)) {
+          setPlans(firebasePlans);
+        }
+      }
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [month, year, isOnline]);
+
   const monthsNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
   const metrics = useMemo(() => {
+    const lastDayOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
+    const historyUpToMonth = transactions.filter(t => new Date(t.date) <= lastDayOfMonth);
+    
     const wise = transactions.filter(t => t.category === Category.SAVINGS && t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const totalIn = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const totalOut = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const totalIn = historyUpToMonth.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const totalOut = historyUpToMonth.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    
     return { wise, wallet: totalIn - totalOut };
-  }, [transactions]);
+  }, [transactions, month, year]);
 
   const monthTx = useMemo(() => {
     return transactions.filter(t => {
@@ -380,7 +657,15 @@ const App: React.FC = () => {
           <div className="w-12 h-12 bg-indigo-600 rounded-[1.2rem] flex items-center justify-center shadow-lg shadow-indigo-100 text-white"><Sparkles size={24} /></div>
           <h1 className="text-3xl font-serif text-indigo-950 tracking-tight">Velvet</h1>
         </div>
-        <button onClick={() => setIsSettingsOpen(true)} className="p-3 rounded-2xl bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"><Cloud size={24} /></button>
+        <div className="flex items-center gap-3">
+          {isOnline && (
+            <div className="flex items-center gap-2 bg-emerald-50 px-4 py-2 rounded-full">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Синхронизировано</span>
+            </div>
+          )}
+          <button onClick={() => setIsSettingsOpen(true)} className="p-3 rounded-2xl bg-slate-50 text-slate-400 hover:text-indigo-600 transition-colors"><Cloud size={24} /></button>
+        </div>
       </header>
 
       <main className="flex-1 max-w-lg w-full mx-auto p-6 space-y-10">
@@ -394,19 +679,48 @@ const App: React.FC = () => {
 
         {activeTab === 'home' && (
           <div className="space-y-10">
-            <div className="grid grid-cols-2 gap-6">
-              <div className="bg-indigo-600 p-8 rounded-[3rem] text-white shadow-2xl shadow-indigo-100 relative overflow-hidden group">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="bg-indigo-600 p-6 sm:p-8 rounded-[3rem] text-white shadow-2xl shadow-indigo-100 relative overflow-hidden group">
                 <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-1000" />
                 <span className="text-[9px] font-bold opacity-60 uppercase block mb-2 tracking-[0.2em]">На Цели / Wise</span>
-                <div className="text-4xl font-light">{metrics.wise.toLocaleString()} <small className="text-sm opacity-40 uppercase">kr</small></div>
+                <div className="text-3xl sm:text-4xl font-light">{metrics.wise.toLocaleString()} <small className="text-sm opacity-40 uppercase">kr</small></div>
               </div>
-              <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden">
+              <div className="bg-white p-6 sm:p-8 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden">
                 <span className="text-[9px] font-bold text-slate-300 uppercase block mb-2 tracking-[0.2em]">Кошелек</span>
-                <div className="text-4xl font-light text-slate-800">{metrics.wallet.toLocaleString()} <small className="text-sm text-slate-200 uppercase">kr</small></div>
+                <div className={`text-3xl sm:text-4xl font-light ${metrics.wallet < 0 ? 'text-rose-500' : 'text-slate-800'}`}>
+                  {metrics.wallet.toLocaleString()} <small className="text-sm text-slate-200 uppercase">kr</small>
+                  {metrics.wallet < 0 && <div className="text-[10px] text-rose-400 mt-1 flex items-center gap-1"><AlertCircle size={12} /> Баланс в минусе</div>}
+                </div>
               </div>
             </div>
 
-            <div className="bg-white p-8 rounded-[3rem] border border-indigo-50 shadow-sm cursor-pointer hover:shadow-md transition-all group" onClick={async () => {
+            {/* Transfer Button */}
+            <button 
+              onClick={async () => {
+                const amount = prompt('Сколько перевести в Wise?');
+                if (!amount || isNaN(Number(amount))) return;
+                const transferTx: Omit<Transaction, 'id'> = {
+                  amount: Number(amount),
+                  category: Category.SAVINGS,
+                  date: new Date().toISOString().split('T')[0],
+                  user: 'Общее',
+                  note: 'Перевод в Wise',
+                  type: 'expense'
+                };
+                const newTx = { ...transferTx, id: Date.now().toString() };
+                setTransactions(prev => [...prev, newTx]);
+                if (isOnline) {
+                  const txDate = new Date(newTx.date);
+                  await firebaseService.saveTransaction(newTx, txDate.getFullYear(), txDate.getMonth());
+                }
+              }}
+              className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white p-6 rounded-[2.5rem] shadow-lg flex items-center justify-center gap-3 font-bold hover:shadow-xl transition-all active:scale-95"
+            >
+              <PiggyBank size={24} />
+              Перевести в Wise (Общее)
+            </button>
+
+            <div className="bg-white p-6 sm:p-8 rounded-[3rem] border border-indigo-50 shadow-sm cursor-pointer hover:shadow-md transition-all group" onClick={async () => {
               if (isAiLoading) return;
               setIsAiLoading(true);
               const advice = await getFinancialAdvice(transactions, apiKey);
@@ -421,11 +735,11 @@ const App: React.FC = () => {
             </div>
 
             <div className="space-y-6">
-              <h3 className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em] px-2">Последние записи</h3>
-              <div className="space-y-4">
-                {monthTx.length === 0 ? <div className="bg-white/50 border-2 border-dashed border-slate-100 py-16 rounded-[3rem] text-center text-slate-300 text-sm italic">Список пуст</div> : monthTx.slice(0, 5).map(t => (
-                  <div key={t.id} onClick={() => { setEditingTx(t); setIsFormOpen(true); }} className="bg-white p-6 rounded-[2.5rem] border border-slate-50 flex items-center gap-6 active:scale-95 transition-all cursor-pointer hover:border-indigo-100 shadow-sm">
-                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-sm" style={{ backgroundColor: CATEGORY_COLORS[t.category] }}>{CATEGORY_ICONS[t.category]}</div>
+              <h3 className="text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em] px-2">Последние записи ({monthTx.length})</h3>
+              <div className="space-y-4 max-h-[500px] overflow-y-auto no-scrollbar">
+                {monthTx.length === 0 ? <div className="bg-white/50 border-2 border-dashed border-slate-100 py-16 rounded-[3rem] text-center text-slate-300 text-sm italic">Список пуст</div> : monthTx.map(t => (
+                  <div key={t.id} className="bg-white p-4 sm:p-6 rounded-[2.5rem] border border-slate-50 flex items-center gap-3 sm:gap-6 hover:border-indigo-100 shadow-sm transition-all group">
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-sm" style={{ backgroundColor: CATEGORY_COLORS[t.category] }}>{CATEGORY_ICONS[t.category]}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-bold text-slate-800 text-sm">{t.category}</span>
@@ -433,7 +747,23 @@ const App: React.FC = () => {
                       </div>
                       <p className="text-[11px] text-slate-300 truncate">{t.note || '—'}</p>
                     </div>
-                    <div className={`font-bold text-lg ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-800'}`}>{t.type === 'income' ? '+' : '-'}{t.amount.toLocaleString()}</div>
+                    <div className={`font-bold text-base sm:text-lg ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-800'}`}>{t.type === 'income' ? '+' : '-'}{t.amount.toLocaleString()}</div>
+                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); setEditingTx(t); setIsFormOpen(true); }} className="p-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition-colors">
+                        <Edit2 size={16} />
+                      </button>
+                      <button onClick={async (e) => { 
+                        e.stopPropagation(); 
+                        if (!confirm('Удалить эту транзакцию?')) return;
+                        setTransactions(prev => prev.filter(tx => tx.id !== t.id));
+                        if (isOnline) {
+                          const txDate = new Date(t.date);
+                          await firebaseService.deleteTransaction(t.id, txDate.getFullYear(), txDate.getMonth());
+                        }
+                      }} className="p-2 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-colors">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -460,9 +790,36 @@ const App: React.FC = () => {
 
       {(isFormOpen || editingTx) && (
         <TransactionForm 
-          onAdd={d => setTransactions(prev => [...prev, { ...d, id: Date.now().toString() }])}
-          onUpdate={(id, d) => setTransactions(prev => prev.map(t => t.id === id ? { ...d, id } : t))}
-          onDelete={id => setTransactions(prev => prev.filter(t => t.id !== id))}
+          onAdd={async (d) => {
+            const newTx = { ...d, id: Date.now().toString() };
+            setTransactions(prev => [...prev, newTx]);
+            
+            // Sync to Firebase
+            if (isOnline) {
+              const txDate = new Date(newTx.date);
+              await firebaseService.saveTransaction(newTx, txDate.getFullYear(), txDate.getMonth());
+            }
+          }}
+          onUpdate={async (id, d) => {
+            const updatedTx = { ...d, id };
+            setTransactions(prev => prev.map(t => t.id === id ? updatedTx : t));
+            
+            // Sync to Firebase
+            if (isOnline) {
+              const txDate = new Date(updatedTx.date);
+              await firebaseService.saveTransaction(updatedTx, txDate.getFullYear(), txDate.getMonth());
+            }
+          }}
+          onDelete={async (id) => {
+            const transaction = transactions.find(t => t.id === id);
+            setTransactions(prev => prev.filter(t => t.id !== id));
+            
+            // Delete from Firebase
+            if (isOnline && transaction) {
+              const txDate = new Date(transaction.date);
+              await firebaseService.deleteTransaction(id, txDate.getFullYear(), txDate.getMonth());
+            }
+          }}
           onClose={() => { setIsFormOpen(false); setEditingTx(null); }}
           initialData={editingTx || undefined}
           currentBalance={metrics.wallet}
